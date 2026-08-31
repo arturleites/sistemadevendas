@@ -96,20 +96,31 @@ elif menu == "Registrar Venda":
 elif menu == "Dashboard":
     st.header("📊 Resumo do Negócio")
     
-    # Cálculos Simples
-    vendas = supabase.table("vendas").select("*, produtos(preco_compra, custo_reparo)").execute()
-    if vendas.data:
-        df_vendas = pd.DataFrame(vendas.data)
-        # Cálculo de Lucro Líquido
-        df_vendas['custo_total'] = df_vendas['produtos'].apply(lambda x: x['preco_compra'] + x['custo_reparo'])
-        df_vendas['lucro'] = df_vendas['preco_venda'] - df_vendas['taxa_plataforma'] - df_vendas['custo_total']
+    try:
+        # Busca vendas e os dados do produto relacionado
+        vendas_res = supabase.table("vendas").select("*, produtos(preco_compra, custo_reparo)").execute()
         
-        total_lucro = df_vendas['lucro'].sum()
-        total_vendas = df_vendas['preco_venda'].sum()
-        
-        c1, c2 = st.columns(2)
-        c1.metric("Vendas Totais", f"R$ {total_vendas:,.2f}")
-        c2.metric("Lucro Líquido Total", f"R$ {total_lucro:,.2f}", delta=f"{((total_lucro/total_vendas)*100):.1f}% ROI")
-        
-        st.subheader("Vendas por Canal")
-        st.bar_chart(df_vendas['canal_venda'].value_counts())
+        if vendas_res.data:
+            df_vendas = pd.DataFrame(vendas_res.data)
+            
+            # Cálculo de Lucro Líquido
+            # Extraímos os dados que vieram da tabela de produtos (que vem como um dicionário)
+            df_vendas['custo_compra'] = df_vendas['produtos'].apply(lambda x: x['preco_compra'] if x else 0)
+            df_vendas['custo_reparo'] = df_vendas['produtos'].apply(lambda x: x['custo_reparo'] if x else 0)
+            
+            df_vendas['lucro'] = df_vendas['preco_venda'] - df_vendas['taxa_plataforma'] - (df_vendas['custo_compra'] + df_vendas['custo_reparo'])
+            
+            total_lucro = df_vendas['lucro'].sum()
+            total_vendas = df_vendas['preco_venda'].sum()
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Vendas Totais", f"R$ {total_vendas:,.2f}")
+            c2.metric("Lucro Líquido Total", f"R$ {total_lucro:,.2f}")
+            
+            st.subheader("Vendas por Canal")
+            st.bar_chart(df_vendas['canal_venda'].value_counts())
+        else:
+            st.info("Ainda não existem vendas registradas para gerar o dashboard.")
+            
+    except Exception as e:
+        st.error(f"Aguardando dados de vendas ou erro na conexão: {e}")
