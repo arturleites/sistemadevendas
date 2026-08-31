@@ -5,122 +5,88 @@ import pandas as pd
 # CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Sistema de Vendas Completo", layout="wide")
 
-# CONEXÃO COM O BANCO DE DADOS (Vamos configurar as chaves depois)
+# CONEXÃO
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
 # MENU LATERAL
-st.sidebar.title("💰 Minhas Vendas")
-menu = st.sidebar.selectbox("Menu", ["Dashboard", "Cadastrar Produto", "Estoque", "Registrar Venda"])
-
-# --- FUNÇÕES AUXILIARES ---
-def listar_produtos_disponiveis():
-    res = supabase.table("produtos").select("*").eq("status", "Disponível").execute()
-    return res.data
+st.sidebar.title("💰 Gestão de Vendas")
+menu = st.sidebar.selectbox("Navegação", ["Dashboard", "Cadastrar Produto", "Estoque", "Registrar Venda"])
 
 # --- TELA: CADASTRAR PRODUTO ---
 if menu == "Cadastrar Produto":
     st.header("📦 Cadastrar Novo Item")
-    
-    with st.form("cadastro_prod", clear_on_submit=True):
-        nome = st.text_input("Nome do Produto (ex: iPhone 13, Bike Trek)")
+    with st.form("form_cadastro"):
+        nome = st.text_input("Nome do Produto")
         cat = st.selectbox("Categoria", ["Eletrônicos", "Games", "Bikes", "Casa", "Outros"])
-        serie = st.text_input("Nº de Série / IMEI / Chassi")
-        preco_c = st.number_input("Preço de Compra (R$)", min_value=0.0)
-        custo_ext = st.number_input("Custos Extras (Limpeza, Peças, Frete) (R$)", min_value=0.0)
-        foto = st.file_uploader("Foto do Produto", type=["jpg", "png", "jpeg"])
+        serie = st.text_input("Nº de Série / IMEI")
+        p_compra = st.number_input("Preço de Compra (R$)", min_value=0.0)
+        c_reparo = st.number_input("Custos Extras (R$)", min_value=0.0)
+        foto = st.file_uploader("Foto", type=["jpg", "png", "jpeg"])
         
         if st.form_submit_button("Salvar no Estoque"):
             foto_url = ""
             if foto:
-                # Upload da foto para o Storage
-                file_path = f"fotos/{foto.name}"
-                supabase.storage.from_("fotos_produtos").upload(file_path, foto.read())
-                foto_url = supabase.storage.from_("fotos_produtos").get_public_url(file_path)
+                try:
+                    path = f"fotos/{foto.name}"
+                    supabase.storage.from_("fotos_produtos").upload(path, foto.read())
+                    foto_url = supabase.storage.from_("fotos_produtos").get_public_url(path)
+                except: pass
 
             supabase.table("produtos").insert({
                 "nome": nome, "categoria": cat, "numero_serie": serie,
-                "preco_compra": preco_c, "custo_reparo": custo_ext,
+                "preco_compra": p_compra, "custo_reparo": c_reparo,
                 "foto_url": foto_url, "status": "Disponível"
             }).execute()
-            st.success("Item adicionado com sucesso!")
+            st.success("Produto salvo!")
 
 # --- TELA: ESTOQUE ---
 elif menu == "Estoque":
     st.header("📋 Itens em Estoque")
-    dados = supabase.table("produtos").select("*").execute()
-    if dados.data:
-        df = pd.DataFrame(dados.data)
-        st.dataframe(df[["nome", "categoria", "preco_compra", "status", "numero_serie"]])
-        
-        for item in dados.data:
-            with st.expander(f"Ver Detalhes: {item['nome']}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    if item['foto_url']:
-                        st.image(item['foto_url'], width=250)
-                with col2:
-                    st.write(f"**Série:** {item['numero_serie']}")
-                    st.write(f"**Custo Total:** R$ {item['preco_compra'] + item['custo_reparo']}")
-                    st.write(f"**Status:** {item['status']}")
+    res = supabase.table("produtos").select("*").execute()
+    if res.data:
+        df = pd.DataFrame(res.data)
+        st.dataframe(df[["nome", "categoria", "preco_compra", "status"]])
+        for item in res.data:
+            with st.expander(f"Detalhes: {item['nome']} ({item['status']})"):
+                if item['foto_url']: st.image(item['foto_url'], width=200)
+                st.write(f"Custo total: R$ {item['preco_compra'] + item['custo_reparo']}")
 
 # --- TELA: REGISTRAR VENDA ---
 elif menu == "Registrar Venda":
     st.header("💸 Registrar Venda")
-    prods = listar_produtos_disponiveis()
-    
-    if prods:
-        nomes_prods = {p['nome']: p['id'] for p in prods}
-        escolha = st.selectbox("Qual item você vendeu?", list(nomes_prods.keys()))
+    res = supabase.table("produtos").select("*").eq("status", "Disponível").execute()
+    if res.data:
+        prods = {p['nome']: p['id'] for p in res.data}
+        item_nome = st.selectbox("Item vendido", list(prods.keys()))
+        p_venda = st.number_input("Preço de Venda", min_value=0.0)
+        taxa = st.number_input("Taxas", min_value=0.0)
+        canal = st.selectbox("Canal", ["ML", "OLX", "Particular"])
         
-        preco_v = st.number_input("Preço de Venda (R$)", min_value=0.0)
-        taxa = st.number_input("Taxas (Plataforma/Cartão) (R$)", min_value=0.0)
-        canal = st.selectbox("Canal de Venda", ["Mercado Livre", "OLX", "Marketplace", "Particular", "Outro"])
-        
-        if st.button("Finalizar Venda"):
-            prod_id = nomes_prods[escolha]
-            # Salva a venda
-            supabase.table("vendas").insert({
-                "produto_id": prod_id, "preco_venda": preco_v,
-                "taxa_plataforma": taxa, "canal_venda": canal
-            }).execute()
-            # Atualiza status do produto
-            supabase.table("produtos").update({"status": "Vendido"}).eq("id", prod_id).execute()
-            st.balloons()
-            st.success(f"Venda de {escolha} registrada!")
-    else:
-        st.warning("Não há produtos disponíveis para venda.")
+        if st.button("Finalizar"):
+            p_id = prods[item_nome]
+            supabase.table("vendas").insert({"produto_id": p_id, "preco_venda": p_venda, "taxa_plataforma": taxa, "canal_venda": canal}).execute()
+            supabase.table("produtos").update({"status": "Vendido"}).eq("id", p_id).execute()
+            st.success("Vendido!")
+    else: st.info("Sem itens no estoque.")
 
 # --- TELA: DASHBOARD ---
 elif menu == "Dashboard":
-    st.header("📊 Resumo do Negócio")
+    st.header("📊 Resumo")
+    vendas_res = supabase.table("vendas").select("*").execute()
+    produtos_res = supabase.table("produtos").select("*").execute()
     
-    try:
-        # Busca vendas e os dados do produto relacionado
-        vendas_res = supabase.table("vendas").select("*, produtos(preco_compra, custo_reparo)").execute()
+    if vendas_res.data and produtos_res.data:
+        v = pd.DataFrame(vendas_res.data)
+        p = pd.DataFrame(produtos_res.data)
+        # Juntando as tabelas no Python para evitar erro de banco
+        df = v.merge(p, left_on="produto_id", right_on="id")
+        df['lucro'] = df['preco_venda'] - df['taxa_plataforma'] - (df['preco_compra'] + df['custo_reparo'])
         
-        if vendas_res.data:
-            df_vendas = pd.DataFrame(vendas_res.data)
-            
-            # Cálculo de Lucro Líquido
-            # Extraímos os dados que vieram da tabela de produtos (que vem como um dicionário)
-            df_vendas['custo_compra'] = df_vendas['produtos'].apply(lambda x: x['preco_compra'] if x else 0)
-            df_vendas['custo_reparo'] = df_vendas['produtos'].apply(lambda x: x['custo_reparo'] if x else 0)
-            
-            df_vendas['lucro'] = df_vendas['preco_venda'] - df_vendas['taxa_plataforma'] - (df_vendas['custo_compra'] + df_vendas['custo_reparo'])
-            
-            total_lucro = df_vendas['lucro'].sum()
-            total_vendas = df_vendas['preco_venda'].sum()
-            
-            c1, c2 = st.columns(2)
-            c1.metric("Vendas Totais", f"R$ {total_vendas:,.2f}")
-            c2.metric("Lucro Líquido Total", f"R$ {total_lucro:,.2f}")
-            
-            st.subheader("Vendas por Canal")
-            st.bar_chart(df_vendas['canal_venda'].value_counts())
-        else:
-            st.info("Ainda não existem vendas registradas para gerar o dashboard.")
-            
-    except Exception as e:
-        st.error(f"Aguardando dados de vendas ou erro na conexão: {e}")
+        c1, c2 = st.columns(2)
+        c1.metric("Vendas Totais", f"R$ {df['preco_venda'].sum():,.2f}")
+        c2.metric("Lucro Real", f"R$ {df['lucro'].sum():,.2f}")
+        st.bar_chart(df['canal_venda'].value_counts())
+    else:
+        st.info("Aguardando primeira venda...")
