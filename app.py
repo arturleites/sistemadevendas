@@ -2,151 +2,198 @@ import streamlit as st
 from supabase import create_client
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
-# 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="ERP Business Pro", layout="wide", initial_sidebar_state="expanded")
+# CONFIGURAÇÃO DO SISTEMA
+st.set_page_config(page_title="ERP BUSINESS PRO", layout="wide", initial_sidebar_state="expanded")
 
-# Estilo visual (Dark Mode)
+# ESTILO DARK MODE PROFISSIONAL
 st.markdown("""
     <style>
+    .main { background-color: #0e1117; }
     [data-testid="stSidebar"] { background-color: #111; border-right: 1px solid #333; }
     .stMetric { background-color: #1e1e1e; padding: 15px; border-radius: 10px; border: 1px solid #333; }
+    div.stButton > button { width: 100%; border-radius: 5px; height: 3em; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. CONEXÃO COM O BANCO
-try:
-    URL = st.secrets["SUPABASE_URL"].strip().rstrip("/")
-    KEY = st.secrets["SUPABASE_KEY"].strip()
-    supabase = create_client(URL, KEY)
-except Exception as e:
-    st.error(f"Erro na conexão: Verifique os Secrets no Streamlit. {e}")
-    st.stop()
+# CONEXÃO
+@st.cache_resource
+def init_db():
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-# 3. MENU LATERAL
+supabase = init_db()
+
+# --- MENU LATERAL ---
 with st.sidebar:
-    st.title("🚀 ERP Pro")
-    menu = st.sidebar.radio("Módulos", 
-        ["📊 Dashboard", "🛒 PDV (Vendas)", "📦 Produtos", "📋 Estoque", "💰 Financeiro"])
+    st.title("🚀 ERP PRO v3")
+    menu = st.radio("MÓDULOS", [
+        "📊 Dashboard", "🛒 Vendas (PDV)", "📦 Produtos", 
+        "📋 Estoque", "👥 Clientes", "💰 Financeiro", "⚙️ Configurações"
+    ])
     st.divider()
-    st.caption("Versão 2.0 - Usuário: Admin")
+    st.info(f"Usuário: Administrador\nData: {datetime.now().strftime('%d/%m/%Y')}")
 
-# --- MÓDULO: DASHBOARD ---
+# --- FUNÇÕES DE APOIO ---
+def get_data(table):
+    return supabase.table(table).select("*").execute().data
+
+# ==========================================
+# MÓDULO: DASHBOARD
+# ==========================================
 if menu == "📊 Dashboard":
-    st.header("📊 Painel de Controle")
+    st.header("📊 Resumo Executivo")
     try:
-        vendas_db = supabase.table("vendas").select("*").execute().data
-        if vendas_db:
-            df_v = pd.DataFrame(vendas_db)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Vendas Totais", f"R$ {df_v['total_liquido'].sum():,.2f}")
-            c2.metric("Nº de Pedidos", len(df_v))
+        vendas = get_data("vendas")
+        df_v = pd.DataFrame(vendas)
+        
+        c1, c2, c3, c4 = st.columns(4)
+        if not df_v.empty:
+            c1.metric("Faturamento Total", f"R$ {df_v['total_liquido'].sum():,.2f}")
+            c2.metric("Total de Vendas", len(df_v))
             c3.metric("Ticket Médio", f"R$ {df_v['total_liquido'].mean():,.2f}")
             
+            # Gráfico de Vendas
             df_v['data_venda'] = pd.to_datetime(df_v['data_venda'])
             vendas_dia = df_v.groupby(df_v['data_venda'].dt.date)['total_liquido'].sum().reset_index()
-            fig = px.line(vendas_dia, x='data_venda', y='total_liquido', title="Evolução de Vendas", template="plotly_dark")
+            fig = px.area(vendas_dia, x='data_venda', y='total_liquido', title="Evolução Diária", template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Aguardando primeiras vendas para gerar gráficos.")
-    except:
-        st.info("Inicie o sistema cadastrando produtos e realizando vendas.")
+            st.info("Inicie suas operações para visualizar os dados.")
+    except: st.warning("Erro ao carregar indicadores.")
 
-# --- MÓDULO: PRODUTOS ---
+# ==========================================
+# MÓDULO: PRODUTOS
+# ==========================================
 elif menu == "📦 Produtos":
-    st.header("📦 Gestão de Produtos")
-    with st.form("form_prod", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        nome = col1.text_input("Nome do Produto*")
-        cat = col1.selectbox("Categoria", ["Eletrônicos", "Bikes", "Games", "Casa", "Outros"])
-        p_compra = col2.number_input("Preço de Compra (R$)", min_value=0.0)
-        p_venda = col2.number_input("Preço de Venda (R$)", min_value=0.0)
-        estoque = col1.number_input("Estoque Inicial", min_value=0)
+    st.header("📦 Cadastro de Produtos")
+    with st.form("form_prod"):
+        c1, c2, c3 = st.columns(3)
+        nome = c1.text_input("Nome do Produto")
+        sku = c2.text_input("SKU/Código")
+        cat = c3.selectbox("Categoria", ["Bikes", "Eletrônicos", "Games", "Outros"])
         
-        if st.form_submit_button("CADASTRAR PRODUTO"):
-            if nome and p_venda > 0:
-                supabase.table("produtos").insert({
-                    "nome": nome, "categoria": cat, "preco_compra": p_compra,
-                    "preco_venda": p_venda, "estoque_atual": estoque, "status": "Ativo"
-                }).execute()
-                st.success(f"Produto {nome} cadastrado!")
-            else:
-                st.error("Nome e Preço de Venda são obrigatórios.")
+        c4, c5, c6 = st.columns(3)
+        p_compra = c4.number_input("Custo de Compra", 0.0)
+        p_venda = c5.number_input("Preço de Venda", 0.0)
+        estoque = c6.number_input("Estoque Inicial", 0)
+        
+        if st.form_submit_button("SALVAR PRODUTO"):
+            supabase.table("produtos").insert({
+                "nome": nome, "sku": sku, "categoria": cat,
+                "preco_compra": p_compra, "preco_venda": p_venda, "estoque_atual": estoque
+            }).execute()
+            st.success("Produto salvo!")
 
-# --- MÓDULO: PDV (VENDAS) ---
-elif menu == "🛒 PDV (Vendas)":
+# ==========================================
+# MÓDULO: VENDAS (PDV)
+# ==========================================
+elif menu == "🛒 Vendas (PDV)":
     st.header("🛒 Ponto de Venda")
-    if 'carrinho' not in st.session_state: st.session_state.carrinho = []
+    if 'cart' not in st.session_state: st.session_state.cart = []
+    
+    prods = get_data("produtos")
+    clis = get_data("clientes")
+    
+    col_l, col_r = st.columns([1.5, 1])
+    
+    with col_l:
+        st.subheader("Seleção de Itens")
+        if prods:
+            df_p = pd.DataFrame(prods)
+            # Filtro de busca
+            busca = st.text_input("🔍 Pesquisar produto")
+            df_filtrado = df_p[df_p['nome'].str.contains(busca, case=False)]
+            
+            sel = st.selectbox("Selecione o item", df_filtrado['nome'].tolist())
+            qtd = st.number_input("Qtd", 1, 100)
+            if st.button("➕ ADICIONAR AO CARRINHO"):
+                item = next(p for p in prods if p['nome'] == sel)
+                st.session_state.cart.append({
+                    "id": item['id'], "nome": item['nome'], 
+                    "preco": item['preco_venda'], "qtd": qtd, "sub": item['preco_venda'] * qtd
+                })
+                st.rerun()
 
-    try:
-        # Busca produtos e filtra no Python para evitar erros de API
-        res = supabase.table("produtos").select("*").execute()
-        prods_db = res.data if res.data else []
-        disponiveis = [p for p in prods_db if p.get('status') == 'Ativo' and p.get('estoque_atual', 0) > 0]
+    with col_r:
+        st.subheader("Carrinho")
+        if st.session_state.cart:
+            df_c = pd.DataFrame(st.session_state.cart)
+            st.table(df_c[['nome', 'qtd', 'sub']])
+            total = df_c['sub'].sum()
+            st.write(f"## TOTAL: R$ {total:,.2f}")
+            
+            forma = st.selectbox("Pagamento", ["Pix", "Dinheiro", "Cartão"])
+            if st.button("🏁 FINALIZAR VENDA"):
+                venda = supabase.table("vendas").insert({"total_liquido": total, "forma_pagamento": forma}).execute()
+                v_id = venda.data[0]['id']
+                for i in st.session_state.cart:
+                    # Registra item
+                    supabase.table("itens_venda").insert({"venda_id": v_id, "produto_id": i['id'], "quantidade": i['qtd'], "preco_unitario": i['preco']}).execute()
+                    # Baixa estoque
+                    p_atual = next(p for p in prods if p['id'] == i['id'])
+                    supabase.table("produtos").update({"estoque_atual": p_atual['estoque_atual'] - i['qtd']}).eq("id", i['id']).execute()
+                
+                # Financeiro
+                supabase.table("financeiro").insert({"tipo": "Receita", "valor": total, "descricao": f"Venda #{v_id}"}).execute()
+                
+                st.session_state.cart = []
+                st.success("Venda Finalizada!")
+                st.rerun()
+        else: st.info("Carrinho vazio.")
 
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if disponiveis:
-                nomes = [p['nome'] for p in disponiveis]
-                sel = st.selectbox("Escolha o Produto", nomes)
-                qtd = st.number_input("Qtd", min_value=1, value=1)
-                if st.button("➕ Adicionar"):
-                    p_info = next(p for p in disponiveis if p['nome'] == sel)
-                    st.session_state.carrinho.append({
-                        "id": p_info['id'], "nome": p_info['nome'], 
-                        "preco": p_info['preco_venda'], "qtd": qtd, "subtotal": p_info['preco_venda'] * qtd
-                    })
-                    st.rerun()
-            else:
-                st.warning("Sem produtos no estoque.")
+# ==========================================
+# MÓDULO: CLIENTES
+# ==========================================
+elif menu == "👥 Clientes":
+    st.header("👥 Gestão de Clientes")
+    with st.expander("Novo Cliente"):
+        with st.form("f_cli"):
+            n = st.text_input("Nome/Razão Social")
+            d = st.text_input("CPF/CNPJ")
+            t = st.text_input("WhatsApp")
+            if st.form_submit_button("Cadastrar"):
+                supabase.table("clientes").insert({"nome": n, "documento": d, "telefone": t}).execute()
+                st.success("Cliente salvo!")
+    
+    clis = get_data("clientes")
+    if clis: st.dataframe(pd.DataFrame(clis), use_container_width=True)
 
-        with col2:
-            if st.session_state.carrinho:
-                df_c = pd.DataFrame(st.session_state.carrinho)
-                st.table(df_c[["nome", "qtd", "subtotal"]])
-                total = df_c['subtotal'].sum()
-                st.write(f"### TOTAL: R$ {total:,.2f}")
-                if st.button("🏁 FINALIZAR VENDA"):
-                    venda = supabase.table("vendas").insert({"total_bruto": total, "total_liquido": total, "forma_pagamento": "Pix"}).execute()
-                    v_id = venda.data[0]['id']
-                    for item in st.session_state.carrinho:
-                        supabase.table("itens_venda").insert({"venda_id": v_id, "produto_id": item['id'], "quantidade": item['qtd'], "preco_unitario": item['preco']}).execute()
-                        # Baixa de estoque simplificada
-                        nova_qtd = next(p['estoque_atual'] for p in disponiveis if p['id'] == item['id']) - item['qtd']
-                        supabase.table("produtos").update({"estoque_atual": nova_qtd}).eq("id", item['id']).execute()
-                    
-                    st.session_state.carrinho = []
-                    st.success("Venda Finalizada!")
-                    st.rerun()
-            else:
-                st.info("Carrinho vazio.")
-    except Exception as e:
-        st.error(f"Erro no PDV: {e}")
-
-# --- MÓDULO: ESTOQUE ---
-elif menu == "📋 Estoque":
-    st.header("📋 Controle de Estoque")
-    try:
-        itens = supabase.table("produtos").select("*").execute().data
-        if itens:
-            df_e = pd.DataFrame(itens)
-            st.dataframe(df_e[["nome", "categoria", "estoque_atual", "preco_compra", "preco_venda"]], use_container_width=True)
-        else:
-            st.info("Nenhum item no estoque.")
-    except Exception as e:
-        st.error(f"Erro: {e}")
-
-# --- MÓDULO: FINANCEIRO ---
+# ==========================================
+# MÓDULO: FINANCEIRO
+# ==========================================
 elif menu == "💰 Financeiro":
     st.header("💰 Fluxo de Caixa")
-    try:
-        vendas = supabase.table("vendas").select("*").execute().data
-        if vendas:
-            df_f = pd.DataFrame(vendas)
-            st.metric("Total em Caixa (Vendas)", f"R$ {df_f['total_liquido'].sum():,.2f}")
-            st.write("### Histórico de Entradas")
-            st.dataframe(df_f[["id", "data_venda", "total_liquido", "forma_pagamento"]], use_container_width=True)
-        else:
-            st.info("Nenhuma movimentação financeira.")
-    except:
-        st.error("Erro ao carregar financeiro.")
+    fin = get_data("financeiro")
+    if fin:
+        df_f = pd.DataFrame(fin)
+        c1, c2 = st.columns(2)
+        receita = df_f[df_f['tipo'] == 'Receita']['valor'].sum()
+        despesa = df_f[df_f['tipo'] == 'Despesa']['valor'].sum()
+        c1.metric("Receitas", f"R$ {receita:,.2f}")
+        c2.metric("Despesas", f"R$ {despesa:,.2f}", delta_color="inverse", delta=f"Saldo: R$ {receita-despesa:,.2f}")
+        
+        st.write("### Extrato de Movimentações")
+        st.dataframe(df_f, use_container_width=True)
+    
+    with st.expander("Lançar Despesa Manual"):
+        with st.form("f_fin"):
+            desc = st.text_input("Descrição (ex: Aluguel)")
+            val = st.number_input("Valor", 0.0)
+            if st.form_submit_button("Lançar Despesa"):
+                supabase.table("financeiro").insert({"tipo": "Despesa", "valor": val, "descricao": desc}).execute()
+                st.rerun()
+
+# ==========================================
+# MÓDULO: ESTOQUE
+# ==========================================
+elif menu == "📋 Estoque":
+    st.header("📋 Relatório de Estoque")
+    prods = get_data("produtos")
+    if prods:
+        df_e = pd.DataFrame(prods)
+        # Alerta de estoque baixo
+        baixo = df_e[df_e['estoque_atual'] <= df_e['estoque_minimo']]
+        if not baixo.empty:
+            st.warning(f"⚠️ Atenção: {len(baixo)} itens com estoque baixo!")
+        st.dataframe(df_e[['nome', 'sku', 'categoria', 'estoque_atual', 'estoque_minimo', 'preco_compra', 'preco_venda']], use_container_width=True)
