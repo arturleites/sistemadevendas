@@ -67,23 +67,44 @@ if menu == "📊 Dashboard":
 # ==========================================
 elif menu == "📦 Produtos":
     st.header("📦 Cadastro de Produtos")
-    with st.form("form_prod"):
+    with st.form("form_prod", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         nome = c1.text_input("Nome do Produto")
         sku = c2.text_input("SKU/Código")
         cat = c3.selectbox("Categoria", ["Bikes", "Eletrônicos", "Games", "Outros"])
         
         c4, c5, c6 = st.columns(3)
-        p_compra = c4.number_input("Custo de Compra", 0.0)
-        p_venda = c5.number_input("Preço de Venda", 0.0)
+        p_compra = c4.number_input("Custo de Compra (R$)", 0.0)
+        p_venda = c5.number_input("Preço de Venda (R$)", 0.0)
         estoque = c6.number_input("Estoque Inicial", 0)
         
         if st.form_submit_button("SALVAR PRODUTO"):
-            supabase.table("produtos").insert({
-                "nome": nome, "sku": sku, "categoria": cat,
-                "preco_compra": p_compra, "preco_venda": p_venda, "estoque_atual": estoque
-            }).execute()
-            st.success("Produto salvo!")
+            if nome:
+                try:
+                    # Montamos os dados exatamente como as colunas do banco
+                    dados_produto = {
+                        "nome": nome, 
+                        "sku": sku, 
+                        "categoria": cat,
+                        "preco_compra": float(p_compra), 
+                        "preco_venda": float(p_venda), 
+                        "estoque_atual": int(estoque)
+                    }
+                    supabase.table("produtos").insert(dados_produto).execute()
+                    st.success(f"✅ Sucesso! {nome} adicionado ao estoque.")
+                except Exception as e:
+                    st.error(f"❌ Erro ao salvar: {e}")
+            else:
+                st.warning("⚠️ O nome do produto é obrigatório.")
+    
+    # Lista rápida de produtos cadastrados logo abaixo
+    st.divider()
+    st.subheader("Itens Cadastrados")
+    try:
+        itens = supabase.table("produtos").select("*").execute().data
+        if itens:
+            st.dataframe(pd.DataFrame(itens)[['nome', 'sku', 'categoria', 'estoque_atual', 'preco_venda']], use_container_width=True)
+    except: pass
 
 # ==========================================
 # MÓDULO: VENDAS (PDV)
